@@ -591,10 +591,23 @@ pub async fn list_commits(
         .bind(repo.id).fetch_all(&state.pool).await?))
 }
 
+#[derive(Deserialize, Default)]
+pub struct DownloadQuery {
+    #[serde(default)]
+    preview: Option<String>,
+}
+
+impl DownloadQuery {
+    fn is_preview(&self) -> bool {
+        matches!(self.preview.as_deref(), Some("1") | Some("true"))
+    }
+}
+
 pub async fn download_file(
     State(state): State<AppState>,
     user: OptionUser,
     Path((kind, owner, name, revision, path)): Path<(String, String, String, String, String)>,
+    Query(query): Query<DownloadQuery>,
 ) -> AppResult<impl IntoResponse> {
     let repo = find_repo(&state, &kind, &owner, &name, user.0.map(|u| u.id)).await?;
     let commit = if revision == "main" {
@@ -616,11 +629,14 @@ pub async fn download_file(
         .get(&sha)
         .await
         .map_err(|_| AppError::NotFound)?;
-    sqlx::query("UPDATE repositories SET download_count=download_count+1 WHERE id=$1")
-        .bind(repo.id)
-        .execute(&state.pool)
-        .await?;
-    let headers = download_headers(&path, commit)?;
+    let preview = query.is_preview();
+    if !preview {
+        sqlx::query("UPDATE repositories SET download_count=download_count+1 WHERE id=$1")
+            .bind(repo.id)
+            .execute(&state.pool)
+            .await?;
+    }
+    let headers = download_headers(&path, commit, preview)?;
     Ok((headers, bytes))
 }
 
@@ -761,11 +777,13 @@ pub async fn hf_model_download(
     state: State<AppState>,
     user: OptionUser,
     Path((owner, name, revision, path)): Path<(String, String, String, String)>,
+    query: Query<DownloadQuery>,
 ) -> AppResult<impl IntoResponse> {
     download_file(
         state,
         user,
         Path(("model".into(), owner, name, revision, path)),
+        query,
     )
     .await
 }
@@ -774,11 +792,13 @@ pub async fn hf_dataset_download(
     state: State<AppState>,
     user: OptionUser,
     Path((owner, name, revision, path)): Path<(String, String, String, String)>,
+    query: Query<DownloadQuery>,
 ) -> AppResult<impl IntoResponse> {
     download_file(
         state,
         user,
         Path(("dataset".into(), owner, name, revision, path)),
+        query,
     )
     .await
 }
@@ -1147,7 +1167,7 @@ async fn ensure_repo_write_access(
     Ok(repo_id)
 }
 
-fn download_headers(path: &str, commit: Uuid) -> AppResult<HeaderMap> {
+fn download_headers(path: &str, commit: Uuid, preview: bool) -> AppResult<HeaderMap> {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let content_type = if is_active_content(mime.as_ref()) {
         "application/octet-stream"
@@ -1161,13 +1181,22 @@ fn download_headers(path: &str, commit: Uuid) -> AppResult<HeaderMap> {
         HeaderValue::from_str(content_type)
             .unwrap_or(HeaderValue::from_static("application/octet-stream")),
     );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!(
+    let disposition = if preview {
+        format!("inline; filename*=UTF-8''{}", percent_encode_header(filename))
+    } else {
+        format!(
             "attachment; filename*=UTF-8''{}",
             percent_encode_header(filename)
-        ))
-        .unwrap_or(HeaderValue::from_static("attachment")),
+        )
+    };
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&disposition)
+            .unwrap_or(HeaderValue::from_static(if preview {
+                "inline"
+            } else {
+                "attachment"
+            })),
     );
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,

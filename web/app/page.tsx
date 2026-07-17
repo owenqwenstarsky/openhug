@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   ArrowRight, Box, Check, ChevronDown, CircleAlert, Clock, Copy, Database, Download, File,
-  FolderGit2, Globe, History, KeyRound, Lock, LogOut, Moon, Plus, Search, Settings, ShieldCheck,
+  FilePlus, FolderGit2, Globe, History, KeyRound, Lock, LogOut, Moon, Pencil, Plus, Search, Settings, ShieldCheck,
   Sun, Trash2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,22 @@ type Token = { id: string; name: string; scopes: string[]; created_at: string; l
 type Commit = { id: string; author: string; message: string; created_at: string };
 type AdminSettings = { instance_name: string; signup_policy: string; default_visibility: string; retention_days: number };
 type AdminUser = { id: string; username: string; email: string; role: string; status: string };
+type BlobReceipt = { sha256: string; size: number };
+
+const TEXT_EDIT_MAX_BYTES = 1024 * 1024;
+const TEXT_EXTENSIONS = new Set([
+  ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv",
+  ".py", ".rs", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs",
+  ".css", ".scss", ".html", ".htm", ".xml", ".svg",
+  ".ini", ".cfg", ".conf", ".sh", ".bash", ".zsh", ".env",
+  ".sql", ".r", ".rb", ".go", ".java", ".kt", ".swift", ".c", ".h", ".cpp", ".hpp",
+  ".proto", ".graphql", ".lock", ".log",
+]);
+const TEXT_BASENAMES = new Set([
+  "readme", "license", "licence", "copying", "authors", "contributors",
+  "changelog", "changes", "dockerfile", "makefile", "gemfile", "procfile",
+  ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig", ".npmrc",
+]);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
@@ -34,6 +51,152 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json();
+}
+
+async function uploadBlob(bytes: Uint8Array): Promise<BlobReceipt> {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const response = await fetch("/api/v1/blobs", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Blob([copy]),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(data.error || "Upload failed");
+  }
+  return response.json();
+}
+
+async function createRepoCommit(
+  kind: string,
+  owner: string,
+  name: string,
+  input: { message: string; files?: { path: string; sha256: string; size: number }[]; deletions?: string[] },
+): Promise<void> {
+  await api(`/repositories/${kind}/${owner}/${name}/commits`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: input.message,
+      files: input.files ?? [],
+      deletions: input.deletions ?? [],
+    }),
+  });
+}
+
+function textBasename(path: string): string {
+  return path.split("/").pop()?.toLowerCase() ?? "";
+}
+
+function isEditableTextFile(path: string, size: number): boolean {
+  if (size > TEXT_EDIT_MAX_BYTES || path.length === 0) return false;
+  const base = textBasename(path);
+  if (TEXT_BASENAMES.has(base)) return true;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return TEXT_BASENAMES.has(base);
+  return TEXT_EXTENSIONS.has(base.slice(dot));
+}
+
+function decodeUtf8OrThrow(bytes: ArrayBuffer): string {
+  const view = new Uint8Array(bytes);
+  if (view.includes(0)) throw new Error("File contains binary data");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    return decoder.decode(view);
+  } catch {
+    throw new Error("File is not valid UTF-8 text");
+  }
+}
+
+function encodeRepoPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function decodeRepoPath(segments: string[]): string {
+  return segments.map((s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  }).join("/");
+}
+
+function canWriteRepo(user: User | null | undefined, repo: Repo): boolean {
+  return Boolean(user && (user.username === repo.owner || user.role === "superuser"));
+}
+
+function isMarkdownFile(path: string): boolean {
+  const base = textBasename(path);
+  return base.endsWith(".md") || base.endsWith(".markdown");
+}
+
+type RepoRoute =
+  | { kind: "model" | "dataset"; owner: string; name: string; base: string; page: "repo" }
+  | { kind: "model" | "dataset"; owner: string; name: string; base: string; page: "blob"; filePath: string }
+  | { kind: "model" | "dataset"; owner: string; name: string; base: string; page: "edit"; filePath: string }
+  | { kind: "model" | "dataset"; owner: string; name: string; base: string; page: "new-file" };
+
+function parseRepoRoute(path: string): RepoRoute | null {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+
+  let kind: "model" | "dataset";
+  let owner: string;
+  let name: string;
+  let rest: string[];
+
+  if (parts[0] === "datasets") {
+    if (parts.length < 3) return null;
+    kind = "dataset";
+    owner = parts[1];
+    name = parts[2];
+    rest = parts.slice(3);
+  } else {
+    if (["models", "settings", "new"].includes(parts[0])) return null;
+    kind = "model";
+    owner = parts[0];
+    name = parts[1];
+    rest = parts.slice(2);
+  }
+
+  const base = kind === "dataset" ? `/datasets/${owner}/${name}` : `/${owner}/${name}`;
+  if (rest.length === 0) return { kind, owner, name, base, page: "repo" };
+  if (rest[0] === "new" && rest[1] === "file" && rest.length === 2) {
+    return { kind, owner, name, base, page: "new-file" };
+  }
+  if (rest[0] === "blob" && rest[1] === "main" && rest.length >= 3) {
+    return { kind, owner, name, base, page: "blob", filePath: decodeRepoPath(rest.slice(2)) };
+  }
+  if (rest[0] === "edit" && rest[1] === "main" && rest.length >= 3) {
+    return { kind, owner, name, base, page: "edit", filePath: decodeRepoPath(rest.slice(2)) };
+  }
+  return null;
+}
+
+function repoBlobUrl(base: string, filePath: string): string {
+  return `${base}/blob/main/${encodeRepoPath(filePath)}`;
+}
+
+function repoEditUrl(base: string, filePath: string): string {
+  return `${base}/edit/main/${encodeRepoPath(filePath)}`;
+}
+
+function repoNewFileUrl(base: string): string {
+  return `${base}/new/file`;
+}
+
+async function fetchRepoTextFile(kind: string, owner: string, name: string, filePath: string): Promise<string> {
+  const response = await fetch(
+    `/api/v1/repositories/${kind}/${owner}/${name}/resolve/main/${encodeRepoPath(filePath)}?preview=1`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(data.error || "Failed to load file");
+  }
+  return decodeUtf8OrThrow(await response.arrayBuffer());
 }
 
 function normalizeTheme(theme?: string): ThemeMode {
@@ -138,7 +301,7 @@ export default function App() {
         }}
       />
     );
-  if (!user && isRepoPath(path))
+  if (!user && parseRepoRoute(path))
     return <PublicRepositoryPage instance={instance} path={path} navigate={navigate} onSignIn={() => navigate("/")} />;
   if (!user)
     return <Auth instance={instance} signupPolicy={signupPolicy} onLogin={(u) => { setUser({ ...u, theme: normalizeTheme(u.theme) }); navigate("/models"); }} />;
@@ -389,11 +552,14 @@ function Shell({ instance, user, path, navigate, defaultVisibility, onThemeChang
 
   useEffect(() => {
     const parts = path.split("/").filter(Boolean);
+    const route = parseRepoRoute(path);
     let label = "Models";
     if (path === "/settings") label = "Settings";
     else if (path.startsWith("/new/")) label = "New repository";
-    else if (path.startsWith("/datasets")) label = parts.length === 3 ? parts.slice(1).join("/") : "Datasets";
-    else if (isRepoPath(path)) label = parts.join("/");
+    else if (route?.page === "blob" || route?.page === "edit") label = route.filePath;
+    else if (route?.page === "new-file") label = `New file · ${route.name}`;
+    else if (route?.page === "repo") label = `${route.owner}/${route.name}`;
+    else if (path.startsWith("/datasets")) label = parts.length >= 3 ? parts.slice(1, 3).join("/") : "Datasets";
     document.title = `${label} · ${instance}`;
   }, [path, instance]);
 
@@ -468,8 +634,8 @@ function Shell({ instance, user, path, navigate, defaultVisibility, onThemeChang
           <SettingsPage user={user} onThemeChange={onThemeChange} logout={logout} />
         ) : path.startsWith("/new/") ? (
           <NewRepository kind={path.endsWith("dataset") ? "dataset" : "model"} user={user} navigate={navigate} defaultVisibility={defaultVisibility} />
-        ) : isRepoPath(path) ? (
-          <RepositoryPage path={path} navigate={navigate} />
+        ) : parseRepoRoute(path) ? (
+          <RepoWorkspace path={path} navigate={navigate} user={user} />
         ) : (
           <Explore kind={path.startsWith("/datasets") ? "dataset" : "model"} navigate={navigate} />
         )}
@@ -705,24 +871,54 @@ function PublicRepositoryPage({ instance, path, navigate, onSignIn }: { instance
         <Button size="sm" variant="outline" onClick={onSignIn}>Sign in</Button>
       </header>
       <div className="content public-content">
-        <RepositoryPage path={path} navigate={navigate} />
+        <RepoWorkspace path={path} navigate={navigate} user={null} />
       </div>
     </main>
   );
 }
 
-function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string) => void }) {
-  const parts = path.split("/").filter(Boolean);
-  const dataset = parts[0] === "datasets";
-  const owner = dataset ? parts[1] : parts[0];
-  const name = dataset ? parts[2] : parts[1];
-  const kind = dataset ? "dataset" : "model";
+function RepoWorkspace({ path, navigate, user }: { path: string; navigate: (p: string) => void; user: User | null }) {
+  const route = parseRepoRoute(path);
+  if (!route) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><CircleAlert /></span>
+        <strong>Page not found</strong>
+        <Button size="sm" variant="outline" onClick={() => navigate("/models")}>Back to models</Button>
+      </div>
+    );
+  }
+  if (route.page === "blob") {
+    return <FileViewPage route={route} navigate={navigate} user={user} />;
+  }
+  if (route.page === "edit") {
+    return <FileEditPage route={route} navigate={navigate} user={user} />;
+  }
+  if (route.page === "new-file") {
+    return <FileCreatePage route={route} navigate={navigate} user={user} />;
+  }
+  return <RepositoryPage route={route} navigate={navigate} user={user} />;
+}
+
+function RepositoryPage({ route, navigate, user }: {
+  route: Extract<RepoRoute, { page: "repo" }>; navigate: (p: string) => void; user: User | null;
+}) {
+  const { kind, owner, name, base } = route;
+  const dataset = kind === "dataset";
 
   const [repo, setRepo] = useState<Repo | null>(null);
   const [failed, setFailed] = useState(false);
   const [tab, setTab] = useState<"files" | "history">("files");
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [copied, copy] = useCopied();
+  const [actionError, setActionError] = useState("");
+
+  const refreshRepo = async () => {
+    const next = await api<Repo>(`/repositories/${kind}/${owner}/${name}`);
+    setRepo(next);
+    setCommits(null);
+    return next;
+  };
 
   useEffect(() => {
     api<Repo>(`/repositories/${kind}/${owner}/${name}`)
@@ -750,6 +946,22 @@ function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string
   if (!repo) return <div className="page-loading"><div className="loader" /></div>;
 
   const uploadCommand = `openhug upload ${owner}/${name} ./files --kind ${kind}`;
+  const canWrite = canWriteRepo(user, repo);
+
+  const deleteFile = async (filePath: string) => {
+    if (!canWrite) return;
+    if (!confirm(`Delete ${filePath}? This creates a new commit.`)) return;
+    setActionError("");
+    try {
+      await createRepoCommit(kind, owner, name, {
+        message: `Delete ${filePath}`,
+        deletions: [filePath],
+      });
+      await refreshRepo();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
 
   return (
     <section className="enter">
@@ -758,6 +970,8 @@ function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string
         {dataset ? "Datasets" : "Models"}
         <span className="sep">/</span>
         {owner}
+        <span className="sep">/</span>
+        {name}
       </div>
       <div className="repo-head">
         <div>
@@ -783,33 +997,72 @@ function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string
             <History />History
           </button>
         </div>
-        <Button size="sm" variant="outline" onClick={() => copy(uploadCommand)}>
-          {copied ? <Check /> : <Copy />}{copied ? "Copied" : "Copy upload command"}
-        </Button>
+        <div className="repo-toolbar-actions">
+          {canWrite && tab === "files" && (
+            <Button size="sm" onClick={() => navigate(repoNewFileUrl(base))}>
+              <FilePlus />Add file
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => copy(uploadCommand)}>
+            {copied ? <Check /> : <Copy />}{copied ? "Copied" : "Copy upload command"}
+          </Button>
+        </div>
       </div>
+
+      {actionError && <Alert kind="error">{actionError}</Alert>}
 
       {tab === "files" ? (
         <div className="card file-table">
           {repo.files && repo.files.length > 0 && (
-            <div className="file-header"><span>Name</span><span>Size</span><span>Digest</span><span /></div>
-          )}
-          {repo.files?.map((file) => (
-            <div className="file-row" key={file.path}>
-              <span className="file-name"><File /><span>{file.path}</span></span>
-              <span className="file-size">{formatBytes(file.size)}</span>
-              <code className="hash-chip">{file.sha256.slice(0, 10)}</code>
-              <a className="icon-btn" title={`Download ${file.path}`} aria-label={`Download ${file.path}`}
-                href={`/api/v1/repositories/${kind}/${owner}/${name}/resolve/main/${file.path}`}>
-                <Download />
-              </a>
+            <div className={`file-header ${canWrite ? "file-header-writable" : ""}`}>
+              <span>Name</span><span>Size</span><span>Digest</span><span />
             </div>
-          ))}
+          )}
+          {repo.files?.map((file) => {
+            const editable = isEditableTextFile(file.path, file.size);
+            return (
+              <div className={`file-row ${canWrite ? "file-row-writable" : ""}`} key={file.path}>
+                {editable ? (
+                  <button type="button" className="file-name file-name-btn" onClick={() => navigate(repoBlobUrl(base, file.path))}>
+                    <File /><span>{file.path}</span>
+                  </button>
+                ) : (
+                  <span className="file-name"><File /><span>{file.path}</span></span>
+                )}
+                <span className="file-size">{formatBytes(file.size)}</span>
+                <code className="hash-chip">{file.sha256.slice(0, 10)}</code>
+                <div className="file-actions">
+                  {canWrite && editable && (
+                    <button type="button" className="icon-btn" title={`Edit ${file.path}`} aria-label={`Edit ${file.path}`}
+                      onClick={() => navigate(repoEditUrl(base, file.path))}>
+                      <Pencil />
+                    </button>
+                  )}
+                  {canWrite && (
+                    <button type="button" className="icon-btn danger" title={`Delete ${file.path}`} aria-label={`Delete ${file.path}`}
+                      onClick={() => deleteFile(file.path)}>
+                      <Trash2 />
+                    </button>
+                  )}
+                  <a className="icon-btn" title={`Download ${file.path}`} aria-label={`Download ${file.path}`}
+                    href={`/api/v1/repositories/${kind}/${owner}/${name}/resolve/main/${encodeRepoPath(file.path)}`}>
+                    <Download />
+                  </a>
+                </div>
+              </div>
+            );
+          })}
           {(!repo.files || repo.files.length === 0) && (
             <div className="empty">
               <span className="empty-icon"><FolderGit2 /></span>
               <strong>This repository is empty</strong>
-              <p>Push the first commit from your machine with the OpenHug CLI:</p>
+              <p>Push the first commit from your machine with the OpenHug CLI, or add a small text file here.</p>
               <code className="snippet">{uploadCommand}</code>
+              {canWrite && (
+                <Button size="sm" onClick={() => navigate(repoNewFileUrl(base))} style={{ marginTop: 16 }}>
+                  <FilePlus />Add a text file
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -836,6 +1089,384 @@ function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string
         </div>
       )}
     </section>
+  );
+}
+
+function FilePageShell({
+  route, filePath, navigate, children, actions,
+}: {
+  route: { kind: "model" | "dataset"; owner: string; name: string; base: string };
+  filePath?: string;
+  navigate: (p: string) => void;
+  children: ReactNode;
+  actions?: ReactNode;
+}) {
+  const dataset = route.kind === "dataset";
+  return (
+    <section className="enter file-page">
+      <div className="breadcrumbs">
+        <button type="button" className="crumb-link" onClick={() => navigate(dataset ? "/datasets" : "/models")}>
+          {dataset ? <Database /> : <Box />}
+          {dataset ? "Datasets" : "Models"}
+        </button>
+        <span className="sep">/</span>
+        <button type="button" className="crumb-link" onClick={() => navigate(route.base)}>
+          {route.owner}
+        </button>
+        <span className="sep">/</span>
+        <button type="button" className="crumb-link" onClick={() => navigate(route.base)}>
+          {route.name}
+        </button>
+        {filePath && (
+          <>
+            <span className="sep">/</span>
+            <span className="crumb-current">{filePath}</span>
+          </>
+        )}
+      </div>
+      <div className="file-page-head">
+        <div>
+          <h1>{filePath || "New file"}</h1>
+        </div>
+        {actions && <div className="file-page-actions">{actions}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function FileViewPage({ route, navigate, user }: {
+  route: Extract<RepoRoute, { page: "blob" }>; navigate: (p: string) => void; user: User | null;
+}) {
+  const { kind, owner, name, base, filePath } = route;
+  const [repo, setRepo] = useState<Repo | null>(null);
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    Promise.all([
+      api<Repo>(`/repositories/${kind}/${owner}/${name}`),
+      fetchRepoTextFile(kind, owner, name, filePath),
+    ])
+      .then(([nextRepo, text]) => {
+        if (cancelled) return;
+        setRepo(nextRepo);
+        setContent(text);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message || "Failed to load file");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [kind, owner, name, filePath]);
+
+  const canWrite = repo ? canWriteRepo(user, repo) : false;
+  const markdown = isMarkdownFile(filePath);
+
+  const deleteFile = async () => {
+    if (!canWrite) return;
+    if (!confirm(`Delete ${filePath}? This creates a new commit.`)) return;
+    setActionError("");
+    try {
+      await createRepoCommit(kind, owner, name, {
+        message: `Delete ${filePath}`,
+        deletions: [filePath],
+      });
+      navigate(base);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
+  if (loading) return <div className="page-loading"><div className="loader" /></div>;
+  if (error) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><CircleAlert /></span>
+        <strong>Could not open file</strong>
+        <p>{error}</p>
+        <Button size="sm" variant="outline" onClick={() => navigate(base)}>Back to repository</Button>
+      </div>
+    );
+  }
+
+  return (
+    <FilePageShell
+      route={route}
+      filePath={filePath}
+      navigate={navigate}
+      actions={
+        <>
+          {canWrite && (
+            <Button size="sm" onClick={() => navigate(repoEditUrl(base, filePath))}>
+              <Pencil />Edit
+            </Button>
+          )}
+          {canWrite && (
+            <Button size="sm" variant="outline" onClick={deleteFile}>
+              <Trash2 />Delete
+            </Button>
+          )}
+          <Button size="sm" variant="outline" asChild>
+            <a href={`/api/v1/repositories/${kind}/${owner}/${name}/resolve/main/${encodeRepoPath(filePath)}`}>
+              <Download />Download
+            </a>
+          </Button>
+        </>
+      }
+    >
+      {actionError && <Alert kind="error">{actionError}</Alert>}
+      <div className="card file-view">
+        {markdown ? (
+          <div className="markdown-body">
+            <ReactMarkdown>{content}</ReactMarkdown>
+          </div>
+        ) : (
+          <pre className="file-view-pre">{content}</pre>
+        )}
+      </div>
+    </FilePageShell>
+  );
+}
+
+function FileEditPage({ route, navigate, user }: {
+  route: Extract<RepoRoute, { page: "edit" }>; navigate: (p: string) => void; user: User | null;
+}) {
+  const { kind, owner, name, base, filePath } = route;
+  const [repo, setRepo] = useState<Repo | null>(null);
+  const [content, setContent] = useState("");
+  const [original, setOriginal] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    Promise.all([
+      api<Repo>(`/repositories/${kind}/${owner}/${name}`),
+      fetchRepoTextFile(kind, owner, name, filePath),
+    ])
+      .then(([nextRepo, text]) => {
+        if (cancelled) return;
+        setRepo(nextRepo);
+        setContent(text);
+        setOriginal(text);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message || "Failed to load file");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [kind, owner, name, filePath]);
+
+  const canWrite = repo ? canWriteRepo(user, repo) : false;
+  const dirty = content !== original;
+
+  const save = async () => {
+    if (!canWrite) return;
+    const encoded = new TextEncoder().encode(content);
+    if (encoded.byteLength > TEXT_EDIT_MAX_BYTES) {
+      setSaveError(`File exceeds the ${formatBytes(TEXT_EDIT_MAX_BYTES)} text edit limit`);
+      return;
+    }
+    if (!isEditableTextFile(filePath, encoded.byteLength)) {
+      setSaveError("Only small text files can be edited in the browser");
+      return;
+    }
+    setBusy(true);
+    setSaveError("");
+    try {
+      const receipt = await uploadBlob(encoded);
+      await createRepoCommit(kind, owner, name, {
+        message: `Update ${filePath}`,
+        files: [{ path: filePath, sha256: receipt.sha256, size: receipt.size }],
+      });
+      navigate(repoBlobUrl(base, filePath));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) return <div className="page-loading"><div className="loader" /></div>;
+  if (error) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><CircleAlert /></span>
+        <strong>Could not open file</strong>
+        <p>{error}</p>
+        <Button size="sm" variant="outline" onClick={() => navigate(base)}>Back to repository</Button>
+      </div>
+    );
+  }
+  if (!canWrite) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><Lock /></span>
+        <strong>Editing requires write access</strong>
+        <p>Only the repository owner can edit files here.</p>
+        <Button size="sm" variant="outline" onClick={() => navigate(repoBlobUrl(base, filePath))}>View file</Button>
+      </div>
+    );
+  }
+
+  return (
+    <FilePageShell
+      route={route}
+      filePath={filePath}
+      navigate={navigate}
+      actions={
+        <>
+          <Button size="sm" variant="outline" onClick={() => navigate(repoBlobUrl(base, filePath))} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      {saveError && <Alert kind="error">{saveError}</Alert>}
+      <div className="card file-editor">
+        <textarea
+          className="file-editor-textarea"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          spellCheck={false}
+          autoFocus
+        />
+      </div>
+    </FilePageShell>
+  );
+}
+
+function FileCreatePage({ route, navigate, user }: {
+  route: Extract<RepoRoute, { page: "new-file" }>; navigate: (p: string) => void; user: User | null;
+}) {
+  const { kind, owner, name, base } = route;
+  const [repo, setRepo] = useState<Repo | null>(null);
+  const [filePath, setFilePath] = useState("");
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    api<Repo>(`/repositories/${kind}/${owner}/${name}`)
+      .then(setRepo)
+      .catch((err: Error) => setError(err.message || "Repository not found"))
+      .finally(() => setLoading(false));
+  }, [kind, owner, name]);
+
+  const canWrite = repo ? canWriteRepo(user, repo) : false;
+  const dirty = filePath.trim().length > 0 || content.length > 0;
+
+  const save = async () => {
+    if (!canWrite) return;
+    const targetPath = filePath.trim();
+    if (!targetPath) {
+      setSaveError("Enter a file path");
+      return;
+    }
+    const encoded = new TextEncoder().encode(content);
+    if (encoded.byteLength > TEXT_EDIT_MAX_BYTES) {
+      setSaveError(`File exceeds the ${formatBytes(TEXT_EDIT_MAX_BYTES)} text edit limit`);
+      return;
+    }
+    if (!isEditableTextFile(targetPath, encoded.byteLength)) {
+      setSaveError("Only small text files can be created in the browser");
+      return;
+    }
+    setBusy(true);
+    setSaveError("");
+    try {
+      const receipt = await uploadBlob(encoded);
+      await createRepoCommit(kind, owner, name, {
+        message: `Create ${targetPath}`,
+        files: [{ path: targetPath, sha256: receipt.sha256, size: receipt.size }],
+      });
+      navigate(repoBlobUrl(base, targetPath));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) return <div className="page-loading"><div className="loader" /></div>;
+  if (error) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><CircleAlert /></span>
+        <strong>Repository not found</strong>
+        <p>{error}</p>
+        <Button size="sm" variant="outline" onClick={() => navigate("/models")}>Back to models</Button>
+      </div>
+    );
+  }
+  if (!canWrite) {
+    return (
+      <div className="empty empty-dashed enter">
+        <span className="empty-icon"><Lock /></span>
+        <strong>Creating files requires write access</strong>
+        <p>Only the repository owner can add files here.</p>
+        <Button size="sm" variant="outline" onClick={() => navigate(base)}>Back to repository</Button>
+      </div>
+    );
+  }
+
+  return (
+    <FilePageShell
+      route={route}
+      navigate={navigate}
+      actions={
+        <>
+          <Button size="sm" variant="outline" onClick={() => navigate(base)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy || !dirty}>
+            {busy ? "Creating…" : "Create file"}
+          </Button>
+        </>
+      }
+    >
+      {saveError && <Alert kind="error">{saveError}</Alert>}
+      <div className="card file-editor">
+        <div className="file-editor-head">
+          <div className="file-editor-title">
+            <Input
+              autoFocus
+              placeholder="path/to/file.md"
+              value={filePath}
+              onChange={(e) => setFilePath(e.target.value)}
+              disabled={busy}
+            />
+            <small>New text file · up to {formatBytes(TEXT_EDIT_MAX_BYTES)}</small>
+          </div>
+        </div>
+        <textarea
+          className="file-editor-textarea"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          spellCheck={false}
+          placeholder="File contents…"
+        />
+      </div>
+    </FilePageShell>
   );
 }
 
@@ -1226,9 +1857,4 @@ function Popover({ trigger, children }: {
       {open && <div className="menu">{children(() => setOpen(false))}</div>}
     </div>
   );
-}
-
-function isRepoPath(path: string) {
-  const p = path.split("/").filter(Boolean);
-  return p[0] === "datasets" ? p.length === 3 : p.length === 2 && !["new", "settings", "models"].includes(p[0]);
 }
