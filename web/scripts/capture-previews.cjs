@@ -1,6 +1,8 @@
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
+const pixelmatch = require("pixelmatch");
+const { PNG } = require("pngjs");
 
 const outputRoot = path.resolve(__dirname, "../../previews");
 const themes = ["light", "dark"];
@@ -62,6 +64,13 @@ async function applyTheme(page, theme) {
   }, theme);
 }
 
+function screenshotsMatch(pathA, pathB) {
+  const imgA = PNG.sync.read(fs.readFileSync(pathA));
+  const imgB = PNG.sync.read(fs.readFileSync(pathB));
+  if (imgA.width !== imgB.width || imgA.height !== imgB.height) return false;
+  return pixelmatch(imgA.data, imgB.data, null, imgA.width, imgA.height, { threshold: 0 }) === 0;
+}
+
 async function capture(page, output, theme, url, name, action) {
   await page.goto("http://localhost:3000/", { waitUntil: "networkidle" });
   await page.evaluate((nextPath) => {
@@ -73,12 +82,23 @@ async function capture(page, output, theme, url, name, action) {
   await applyTheme(page, theme);
   await page.evaluate(() => scrollTo(0, 0));
   await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(output, name), fullPage: true });
+  const finalPath = path.join(output, name);
+  const tempPath = `${finalPath}.tmp.png`;
+  await page.screenshot({
+    path: tempPath,
+    fullPage: true,
+    animations: "disabled",
+    caret: "hide",
+  });
+  if (fs.existsSync(finalPath) && screenshotsMatch(tempPath, finalPath)) {
+    fs.rmSync(tempPath);
+    return;
+  }
+  fs.renameSync(tempPath, finalPath);
 }
 
 async function captureTheme(browser, theme) {
   const output = path.join(outputRoot, theme);
-  fs.rmSync(output, { recursive: true, force: true });
   fs.mkdirSync(output, { recursive: true });
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1 });
