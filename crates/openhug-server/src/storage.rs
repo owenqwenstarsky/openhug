@@ -113,4 +113,24 @@ mod tests {
         let digest = "ab00000000000000000000000000000000000000000000000000000000000000";
         assert_eq!(blob_key(digest), format!("blobs/ab/{digest}"));
     }
+
+    #[tokio::test]
+    async fn local_store_round_trips_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::from_config(&StorageConfig::Local {
+            path: dir.path().to_path_buf(),
+        })
+        .unwrap();
+        store.healthcheck().await.unwrap();
+        let (digest, size) = store
+            .put(bytes::Bytes::from_static(b"payload"))
+            .await
+            .unwrap();
+        assert_eq!(size, 7);
+        assert!(store.contains(&digest).await.unwrap());
+        let loaded = store.get(&digest).await.unwrap();
+        assert_eq!(loaded.as_ref(), b"payload");
+        store.delete(&digest).await.unwrap();
+        assert!(!store.contains(&digest).await.unwrap());
+    }
 }

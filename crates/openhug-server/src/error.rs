@@ -53,3 +53,43 @@ impl IntoResponse for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn maps_client_errors_to_expected_status_codes() {
+        assert_eq!(
+            status_for(&AppError::BadRequest("bad".into())),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_for(&AppError::Unauthorized),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(status_for(&AppError::Forbidden), StatusCode::FORBIDDEN);
+        assert_eq!(status_for(&AppError::NotFound), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_for(&AppError::Conflict("exists".into())),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status_for(&AppError::RateLimited("slow down".into())),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    fn status_for(error: &AppError) -> StatusCode {
+        match error {
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
+            AppError::Database(_) | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}

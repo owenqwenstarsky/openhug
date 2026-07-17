@@ -1182,7 +1182,10 @@ fn download_headers(path: &str, commit: Uuid, preview: bool) -> AppResult<Header
             .unwrap_or(HeaderValue::from_static("application/octet-stream")),
     );
     let disposition = if preview {
-        format!("inline; filename*=UTF-8''{}", percent_encode_header(filename))
+        format!(
+            "inline; filename*=UTF-8''{}",
+            percent_encode_header(filename)
+        )
     } else {
         format!(
             "attachment; filename*=UTF-8''{}",
@@ -1191,12 +1194,11 @@ fn download_headers(path: &str, commit: Uuid, preview: bool) -> AppResult<Header
     };
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&disposition)
-            .unwrap_or(HeaderValue::from_static(if preview {
-                "inline"
-            } else {
-                "attachment"
-            })),
+        HeaderValue::from_str(&disposition).unwrap_or(HeaderValue::from_static(if preview {
+            "inline"
+        } else {
+            "attachment"
+        })),
     );
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
@@ -1313,6 +1315,13 @@ mod tests {
         assert!(validate_username("ab").is_err());
         assert!(validate_password("a-long-password").is_ok());
         assert!(validate_password("short").is_err());
+    }
+
+    #[test]
+    fn validates_repository_names() {
+        assert!(validate_repo_name("my-model.v1").is_ok());
+        assert!(validate_repo_name("../escape").is_err());
+        assert!(validate_repo_name("").is_err());
     }
 
     #[test]

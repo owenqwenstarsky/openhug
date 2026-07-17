@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: openhug
+          POSTGRES_PASSWORD: openhug
+          POSTGRES_DB: openhug_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openhug -d openhug_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OPENHUG_TEST_DATABASE_URL: postgres://openhug:openhug@localhost:5432/openhug_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

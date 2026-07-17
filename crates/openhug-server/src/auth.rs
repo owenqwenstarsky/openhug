@@ -134,4 +134,27 @@ mod tests {
         assert_eq!(hash_secret(&first), hash_secret(&first));
         assert_ne!(hash_secret(&first), first);
     }
+
+    #[test]
+    fn current_user_scope_checks() {
+        let admin = CurrentUser {
+            id: uuid::Uuid::new_v4(),
+            username: "admin".into(),
+            email: "admin@example.com".into(),
+            role: "superuser".into(),
+            status: "active".into(),
+            theme: "light".into(),
+            scopes: vec!["read".into(), "write".into(), "admin".into()],
+        };
+        assert!(admin.require_scope("read").is_ok());
+        assert!(admin.require_scope("admin").is_ok());
+        assert!(admin.is_superuser());
+
+        let reader = CurrentUser {
+            scopes: vec!["read".into()],
+            ..admin.clone()
+        };
+        assert!(reader.require_scope("read").is_ok());
+        assert!(reader.require_scope("write").is_err());
+    }
 }

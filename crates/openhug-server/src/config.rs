@@ -90,3 +90,22 @@ impl Config {
 fn required(name: &str) -> Result<String> {
     env::var(name).with_context(|| format!("{name} is required"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_label_reports_driver_name() {
+        let config = Config {
+            database_url: String::new(),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            public_url: String::new(),
+            setup_token: None,
+            storage: StorageConfig::Local {
+                path: "./data".into(),
+            },
+        };
+        assert_eq!(config.storage_label(), "local");
+    }
+}
