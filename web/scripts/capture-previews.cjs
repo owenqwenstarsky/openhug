@@ -23,7 +23,7 @@ async function mockApi(page, { signedOut = false, theme = "light" } = {}) {
     const url = new URL(route.request().url());
     const endpoint = url.pathname.replace("/api/v1", "");
     let body = {};
-    if (endpoint === "/setup/status") body = { initialized: true, instance_name: "OpenHug Studio", signup_policy: "immediate", default_visibility: "public" };
+    if (endpoint === "/setup/status") body = { initialized: true, instance_name: "OpenHug", signup_policy: "immediate", default_visibility: "public" };
     else if (endpoint === "/auth/me" && signedOut) {
       await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Not signed in" }) });
       return;
@@ -45,7 +45,7 @@ async function mockApi(page, { signedOut = false, theme = "light" } = {}) {
       { id: "ohp_8e3f1a09", name: "MacBook Pro CLI", scopes: ["read", "write"], created_at: "2026-06-28T13:05:00Z", last_used_at: "2026-07-15T18:45:00Z" },
       { id: "ohp_4c9b62e7", name: "Training runner", scopes: ["read", "write"], created_at: "2026-06-11T09:20:00Z", last_used_at: "2026-07-14T08:05:00Z" },
     ];
-    else if (endpoint === "/admin/settings") body = { instance_name: "OpenHug Studio", signup_policy: "immediate", default_visibility: "public", retention_days: 30 };
+    else if (endpoint === "/admin/settings") body = { instance_name: "OpenHug", signup_policy: "immediate", default_visibility: "public", retention_days: 30 };
     else if (endpoint === "/admin/users") body = [
       { id: "u1", username: "mara", email: "mara@openhug.studio", role: "superuser", status: "active" },
       { id: "u2", username: "eli", email: "eli@openhug.studio", role: "member", status: "active" },
