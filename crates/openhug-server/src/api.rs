@@ -233,6 +233,30 @@ pub async fn me(user: CurrentUser) -> Json<CurrentUser> {
 }
 
 #[derive(Deserialize)]
+pub struct UpdateMe {
+    theme: Option<String>,
+}
+
+pub async fn update_me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(input): Json<UpdateMe>,
+) -> AppResult<Json<CurrentUser>> {
+    let theme = input.theme.unwrap_or_else(|| user.theme.clone());
+    if !["light", "dark"].contains(&theme.as_str()) {
+        return Err(AppError::BadRequest("invalid theme".into()));
+    }
+    sqlx::query("UPDATE users SET theme=$1 WHERE id=$2")
+        .bind(&theme)
+        .bind(user.id)
+        .execute(&state.pool)
+        .await?;
+    let mut user = user;
+    user.theme = theme;
+    Ok(Json(user))
+}
+
+#[derive(Deserialize)]
 pub struct SignupInput {
     username: String,
     email: String,

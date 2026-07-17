@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
         .route("/api/v1/auth/login", post(api::login))
         .route("/api/v1/auth/logout", post(api::logout))
         .route("/api/v1/auth/signup", post(api::signup))
-        .route("/api/v1/auth/me", get(api::me))
+        .route("/api/v1/auth/me", get(api::me).put(api::update_me))
         .route(
             "/api/v1/repositories",
             get(api::list_repositories).post(api::create_repository),

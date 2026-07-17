@@ -21,6 +21,7 @@ pub struct CurrentUser {
     pub email: String,
     pub role: String,
     pub status: String,
+    pub theme: String,
     #[serde(skip_serializing)]
     pub scopes: Vec<String>,
 }
@@ -82,7 +83,7 @@ pub async fn authenticate(
     };
     let hash = hash_secret(secret);
     let user = if token_auth {
-        let user = sqlx::query_as::<_, CurrentUser>("SELECT u.id, u.username, u.email, u.role::text AS role, u.status::text AS status, t.scopes FROM users u JOIN api_tokens t ON t.user_id=u.id WHERE t.token_hash=$1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.status='active'")
+        let user = sqlx::query_as::<_, CurrentUser>("SELECT u.id, u.username, u.email, u.role::text AS role, u.status::text AS status, u.theme, t.scopes FROM users u JOIN api_tokens t ON t.user_id=u.id WHERE t.token_hash=$1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.status='active'")
             .bind(&hash).fetch_optional(pool).await?
             ;
         if user.is_some() {
@@ -93,7 +94,7 @@ pub async fn authenticate(
         }
         user
     } else {
-        sqlx::query_as::<_, CurrentUser>("SELECT u.id, u.username, u.email, u.role::text AS role, u.status::text AS status, CASE WHEN u.role='superuser' THEN ARRAY['read','write','admin']::text[] ELSE ARRAY['read','write']::text[] END AS scopes FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id_hash=$1 AND s.expires_at > now() AND u.status='active'")
+        sqlx::query_as::<_, CurrentUser>("SELECT u.id, u.username, u.email, u.role::text AS role, u.status::text AS status, u.theme, CASE WHEN u.role='superuser' THEN ARRAY['read','write','admin']::text[] ELSE ARRAY['read','write']::text[] END AS scopes FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id_hash=$1 AND s.expires_at > now() AND u.status='active'")
             .bind(&hash).fetch_optional(pool).await?
     };
     user.ok_or(AppError::Unauthorized)

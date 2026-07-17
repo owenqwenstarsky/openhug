@@ -3,13 +3,14 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight, Box, Check, ChevronDown, CircleAlert, Clock, Copy, Database, Download, File,
-  FolderGit2, Globe, History, KeyRound, Lock, LogOut, Plus, Search, Settings, ShieldCheck,
-  Trash2, X,
+  FolderGit2, Globe, History, KeyRound, Lock, LogOut, Moon, Plus, Search, Settings, ShieldCheck,
+  Sun, Trash2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type User = { id: string; username: string; email: string; role: string };
+type ThemeMode = "light" | "dark";
+type User = { id: string; username: string; email: string; role: string; theme: ThemeMode };
 type Repo = {
   id: string; owner: string; kind: "model" | "dataset"; name: string; description: string;
   visibility: "public" | "private"; head_commit_id?: string; download_count: number;
@@ -33,6 +34,10 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json();
+}
+
+function normalizeTheme(theme?: string): ThemeMode {
+  return theme === "dark" ? "dark" : "light";
 }
 
 /* ---------------------------------------------------------------- helpers */
@@ -91,6 +96,11 @@ export default function App() {
   const [path, setPath] = useState("/");
 
   useEffect(() => {
+    document.documentElement.dataset.theme = normalizeTheme(user?.theme);
+    document.documentElement.style.colorScheme = normalizeTheme(user?.theme);
+  }, [user?.theme]);
+
+  useEffect(() => {
     setPath(location.pathname);
     api<{ initialized: boolean; instance_name?: string; signup_policy?: string; default_visibility?: "public" | "private"; setup_token_required?: boolean }>("/setup/status")
       .then((s) => {
@@ -99,7 +109,7 @@ export default function App() {
         setSignupPolicy(s.signup_policy || "disabled");
         setDefaultVisibility(s.default_visibility || "public");
         setSetupTokenRequired(Boolean(s.setup_token_required));
-        if (s.initialized) return api<User>("/auth/me").then(setUser).catch(() => null);
+        if (s.initialized) return api<User>("/auth/me").then((u) => setUser({ ...u, theme: normalizeTheme(u.theme) })).catch(() => null);
       })
       .finally(() => setReady(true));
   }, []);
@@ -131,7 +141,13 @@ export default function App() {
   if (!user && isRepoPath(path))
     return <PublicRepositoryPage instance={instance} path={path} navigate={navigate} onSignIn={() => navigate("/")} />;
   if (!user)
-    return <Auth instance={instance} signupPolicy={signupPolicy} onLogin={(u) => { setUser(u); navigate("/models"); }} />;
+    return <Auth instance={instance} signupPolicy={signupPolicy} onLogin={(u) => { setUser({ ...u, theme: normalizeTheme(u.theme) }); navigate("/models"); }} />;
+
+  const updateTheme = async (theme: ThemeMode) => {
+    const updated = await api<User>("/auth/me", { method: "PUT", body: JSON.stringify({ theme }) });
+    setUser({ ...updated, theme: normalizeTheme(updated.theme) });
+  };
+
   return (
     <Shell
       instance={instance}
@@ -139,6 +155,7 @@ export default function App() {
       path={path}
       navigate={navigate}
       defaultVisibility={defaultVisibility}
+      onThemeChange={updateTheme}
       logout={async () => {
         await api("/auth/logout", { method: "POST" });
         setUser(null);
@@ -362,8 +379,8 @@ function Auth({ instance, signupPolicy, onLogin }: { instance: string; signupPol
 
 /* ------------------------------------------------------------------ shell */
 
-function Shell({ instance, user, path, navigate, defaultVisibility, logout }: {
-  instance: string; user: User; path: string; navigate: (p: string) => void; defaultVisibility: "public" | "private"; logout: () => void;
+function Shell({ instance, user, path, navigate, defaultVisibility, onThemeChange, logout }: {
+  instance: string; user: User; path: string; navigate: (p: string) => void; defaultVisibility: "public" | "private"; onThemeChange: (theme: ThemeMode) => Promise<void>; logout: () => void;
 }) {
   const link = (to: string) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -431,6 +448,11 @@ function Shell({ instance, user, path, navigate, defaultVisibility, logout }: {
                   <button className="menu-item" onClick={() => { close(); navigate("/settings"); }}>
                     <Settings />Settings
                   </button>
+                  <button className="menu-item menu-toggle-item" onClick={async () => { try { await onThemeChange(user.theme === "dark" ? "light" : "dark"); close(); } catch (e) { console.error(e); } }}>
+                    {user.theme === "dark" ? <Sun /> : <Moon />}
+                    <span><strong>{user.theme === "dark" ? "Light mode" : "Dark mode"}</strong><small>Saved to your account</small></span>
+                    <span className={`switch ${user.theme === "dark" ? "on" : ""}`} aria-hidden="true"><span /></span>
+                  </button>
                   <div className="menu-sep" />
                   <button className="menu-item danger" onClick={() => { close(); logout(); }}>
                     <LogOut />Sign out
@@ -443,7 +465,7 @@ function Shell({ instance, user, path, navigate, defaultVisibility, logout }: {
       </header>
       <main className="workspace">
         {path === "/settings" ? (
-          <SettingsPage user={user} logout={logout} />
+          <SettingsPage user={user} onThemeChange={onThemeChange} logout={logout} />
         ) : path.startsWith("/new/") ? (
           <NewRepository kind={path.endsWith("dataset") ? "dataset" : "model"} user={user} navigate={navigate} defaultVisibility={defaultVisibility} />
         ) : isRepoPath(path) ? (
@@ -819,12 +841,15 @@ function RepositoryPage({ path, navigate }: { path: string; navigate: (p: string
 
 /* --------------------------------------------------------------- settings */
 
-function SettingsPage({ user, logout }: { user: User; logout: () => void }) {
-  const [tab, setTab] = useState<"tokens" | "admin">("tokens");
+function SettingsPage({ user, onThemeChange, logout }: { user: User; onThemeChange: (theme: ThemeMode) => Promise<void>; logout: () => void }) {
+  const [tab, setTab] = useState<"general" | "tokens" | "admin">("general");
   return (
     <section className="settings-page enter">
       <nav className="settings-nav">
         <p className="nav-label">Settings</p>
+        <button className={tab === "general" ? "active" : ""} onClick={() => setTab("general")}>
+          <Settings />General
+        </button>
         <button className={tab === "tokens" ? "active" : ""} onClick={() => setTab("tokens")}>
           <KeyRound />API tokens
         </button>
@@ -838,8 +863,80 @@ function SettingsPage({ user, logout }: { user: User; logout: () => void }) {
           <LogOut />Sign out
         </button>
       </nav>
-      {tab === "admin" ? <AdminPanel /> : <TokenPanel />}
+      {tab === "general" ? <GeneralPanel user={user} onThemeChange={onThemeChange} /> : tab === "admin" ? <AdminPanel /> : <TokenPanel />}
     </section>
+  );
+}
+
+function GeneralPanel({ user, onThemeChange }: { user: User; onThemeChange: (theme: ThemeMode) => Promise<void> }) {
+  const [busy, setBusy] = useState<ThemeMode | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const saveTheme = async (theme: ThemeMode) => {
+    if (theme === user.theme) return;
+    try {
+      setError("");
+      setBusy(theme);
+      await onThemeChange(theme);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="settings-content">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">Settings</p>
+          <h1>General</h1>
+          <p className="sub">Choose how OpenHug appears when you sign in with this account.</p>
+        </div>
+      </div>
+
+      <div className="card settings-card">
+        <div className="card-head">
+          <h2>Appearance</h2>
+          <p>Your preference is stored in the database and follows your account.</p>
+        </div>
+        <div className="card-body">
+          <div className="theme-options" role="radiogroup" aria-label="Theme preference">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={user.theme === "light"}
+              className={`theme-choice ${user.theme === "light" ? "selected" : ""}`}
+              onClick={() => saveTheme("light")}
+              disabled={busy !== null}
+            >
+              <span className="theme-preview theme-preview-light"><Sun /></span>
+              <span><strong>Light</strong><small>Warm paper and high-contrast ink.</small></span>
+              {busy === "light" ? <span className="mini-loader" /> : user.theme === "light" && <Check />}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={user.theme === "dark"}
+              className={`theme-choice ${user.theme === "dark" ? "selected" : ""}`}
+              onClick={() => saveTheme("dark")}
+              disabled={busy !== null}
+            >
+              <span className="theme-preview theme-preview-dark"><Moon /></span>
+              <span><strong>Dark</strong><small>Low-glow surfaces for late sessions.</small></span>
+              {busy === "dark" ? <span className="mini-loader" /> : user.theme === "dark" && <Check />}
+            </button>
+          </div>
+          {error && <Alert kind="error">{error}</Alert>}
+        </div>
+        <div className="card-foot">
+          {saved && <span className="saved-note"><Check />Saved</span>}
+        </div>
+      </div>
+    </div>
   );
 }
 
