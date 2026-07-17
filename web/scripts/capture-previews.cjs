@@ -2,8 +2,12 @@ const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 
-const output = path.resolve(__dirname, "../../previews");
-fs.mkdirSync(output, { recursive: true });
+const outputRoot = path.resolve(__dirname, "../../previews");
+const themes = ["light", "dark"];
+fs.mkdirSync(outputRoot, { recursive: true });
+for (const file of fs.readdirSync(outputRoot)) {
+  if (/^\d{2}-.+\.png$/.test(file)) fs.rmSync(path.join(outputRoot, file));
+}
 
 const repos = [
   { id: "r1", owner: "atelier", kind: "model", name: "lumen-7b-instruct", description: "A concise, capable instruction model for everyday research workflows.", visibility: "public", head_commit_id: "c4e7b1f2d3a4", download_count: 12843, updated_at: "2026-07-15T14:40:00Z", files: [{ path: "README.md", sha256: "2a4ef67c21bc8fd445e0", size: 12430 }, { path: "config.json", sha256: "02ef7c66bd52ab85901e", size: 2184 }, { path: "model-00001-of-00003.safetensors", sha256: "ac9b57d018bb2c110b8c", size: 3221225472 }, { path: "tokenizer.json", sha256: "f8a4fd0218fe20bb9d1c", size: 1849032 }] },
@@ -14,7 +18,7 @@ const repos = [
   { id: "r6", owner: "fieldnotes", kind: "dataset", name: "archive-summaries", description: "Human-reviewed archival summaries, preserved with source metadata.", visibility: "private", head_commit_id: "91dd4011a4bd", download_count: 910, updated_at: "2026-07-10T13:05:00Z", files: [] },
 ];
 
-async function mockApi(page, { signedOut = false } = {}) {
+async function mockApi(page, { signedOut = false, theme = "light" } = {}) {
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const endpoint = url.pathname.replace("/api/v1", "");
@@ -23,7 +27,8 @@ async function mockApi(page, { signedOut = false } = {}) {
     else if (endpoint === "/auth/me" && signedOut) {
       await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Not signed in" }) });
       return;
-    } else if (endpoint === "/auth/me") body = { id: "u1", username: "mara", email: "mara@openhug.studio", role: "superuser" };
+    } else if (endpoint === "/auth/me" && route.request().method() === "PUT") body = { id: "u1", username: "mara", email: "mara@openhug.studio", role: "superuser", theme };
+    else if (endpoint === "/auth/me") body = { id: "u1", username: "mara", email: "mara@openhug.studio", role: "superuser", theme };
     else if (endpoint === "/repositories") {
       const kind = url.searchParams.get("kind");
       const search = (url.searchParams.get("search") || "").toLowerCase();
@@ -50,7 +55,14 @@ async function mockApi(page, { signedOut = false } = {}) {
   });
 }
 
-async function capture(page, url, name, action) {
+async function applyTheme(page, theme) {
+  await page.evaluate((themeName) => {
+    document.documentElement.dataset.theme = themeName;
+    document.documentElement.style.colorScheme = themeName;
+  }, theme);
+}
+
+async function capture(page, output, theme, url, name, action) {
   await page.goto("http://localhost:3000/", { waitUntil: "networkidle" });
   await page.evaluate((nextPath) => {
     history.pushState({}, "", nextPath);
@@ -58,9 +70,42 @@ async function capture(page, url, name, action) {
   }, url);
   await page.waitForTimeout(250);
   if (action) await action();
+  await applyTheme(page, theme);
   await page.evaluate(() => scrollTo(0, 0));
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(output, name), fullPage: true });
+}
+
+async function captureTheme(browser, theme) {
+  const output = path.join(outputRoot, theme);
+  fs.rmSync(output, { recursive: true, force: true });
+  fs.mkdirSync(output, { recursive: true });
+
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1 });
+  await mockApi(page, { theme });
+  await capture(page, output, theme, "/models", "01-models.png");
+  await capture(page, output, theme, "/datasets", "02-datasets.png");
+  await capture(page, output, theme, "/atelier/lumen-7b-instruct", "03-model-repository.png");
+  await capture(page, output, theme, "/datasets/atelier/canopy-captions-v2", "04-dataset-repository.png");
+  await capture(page, output, theme, "/new/model", "05-new-model.png");
+  await capture(page, output, theme, "/new/dataset", "06-new-dataset.png");
+  await capture(page, output, theme, "/settings", "07-api-tokens.png");
+  await capture(page, output, theme, "/settings", "08-administration.png", () => page.getByRole("button", { name: "Administration" }).click());
+  await page.close();
+
+  const authPage = await browser.newPage({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1 });
+  await mockApi(authPage, { signedOut: true, theme });
+  await capture(authPage, output, theme, "/", "09-login.png", async () => {
+    await authPage.getByLabel("Email or username").fill("mara@openhug.studio");
+    await authPage.getByLabel("Password").fill("studio-preview-only");
+  });
+  await capture(authPage, output, theme, "/", "10-signup.png", async () => {
+    await authPage.getByRole("button", { name: "Need an account? Sign up" }).click();
+    await authPage.getByLabel("Username").fill("jordan");
+    await authPage.getByLabel("Email").fill("jordan@example.com");
+    await authPage.getByLabel("Password").fill("studio-preview-only");
+  });
+  await authPage.close();
 }
 
 (async () => {
@@ -69,28 +114,7 @@ async function capture(page, url, name, action) {
     launchOptions.executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   }
   const browser = await chromium.launch(launchOptions);
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1 });
-  await mockApi(page);
-  await capture(page, "/models", "01-models.png");
-  await capture(page, "/datasets", "02-datasets.png");
-  await capture(page, "/atelier/lumen-7b-instruct", "03-model-repository.png");
-  await capture(page, "/datasets/atelier/canopy-captions-v2", "04-dataset-repository.png");
-  await capture(page, "/new/model", "05-new-model.png");
-  await capture(page, "/new/dataset", "06-new-dataset.png");
-  await capture(page, "/settings", "07-api-tokens.png");
-  await capture(page, "/settings", "08-administration.png", () => page.getByRole("button", { name: "Administration" }).click());
-  const authPage = await browser.newPage({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1 });
-  await mockApi(authPage, { signedOut: true });
-  await capture(authPage, "/", "09-login.png", async () => {
-    await authPage.getByLabel("Email or username").fill("mara@openhug.studio");
-    await authPage.getByLabel("Password").fill("studio-preview-only");
-  });
-  await capture(authPage, "/", "10-signup.png", async () => {
-    await authPage.getByRole("button", { name: "Need an account? Sign up" }).click();
-    await authPage.getByLabel("Username").fill("jordan");
-    await authPage.getByLabel("Email").fill("jordan@example.com");
-    await authPage.getByLabel("Password").fill("studio-preview-only");
-  });
+  for (const theme of themes) await captureTheme(browser, theme);
   await browser.close();
-  console.log(`Wrote 10 previews to ${output}`);
+  console.log(`Wrote ${themes.length * 10} previews to ${outputRoot}`);
 })();

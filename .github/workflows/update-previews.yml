@@ -6,6 +6,9 @@ on:
       - "**"
     paths:
       - "web/app/**"
+      - "web/components/**"
+      - "web/scripts/capture-previews.cjs"
+      - ".github/workflows/update-previews.yml"
 
 permissions:
   contents: write
