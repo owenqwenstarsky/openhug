@@ -6,7 +6,13 @@ on:
       - "**"
     paths:
       - "web/app/**"
-      - "web/components/**"
+      - "web/components/auth.tsx"
+      - "web/components/explore.tsx"
+      - "web/components/shell.tsx"
+      - "web/components/new-repository.tsx"
+      - "web/components/repo/**"
+      - "web/components/settings/**"
+      - "web/components/ui/**"
       - "web/scripts/capture-previews.cjs"
       - ".github/workflows/update-previews.yml"
 
@@ -21,7 +27,6 @@ jobs:
   update-previews:
     name: Refresh committed screenshots
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
 
     steps:
       - name: Check out repository

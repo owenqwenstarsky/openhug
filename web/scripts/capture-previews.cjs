@@ -1,7 +1,9 @@
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
-const pixelmatch = require("pixelmatch");
+// pixelmatch v7 is ESM-only; require() returns the module namespace.
+const pixelmatchModule = require("pixelmatch");
+const pixelmatch = pixelmatchModule.default || pixelmatchModule;
 const { PNG } = require("pngjs");
 
 const outputRoot = path.resolve(__dirname, "../../previews");
