@@ -1,0 +1,76 @@
+name: Update page previews
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "web/app/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-previews-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-previews:
+    name: Refresh committed screenshots
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build static web app
+        working-directory: web
+        run: npm run build
+
+      - name: Serve static web app
+        run: |
+          python3 -m http.server 3000 --directory web/out > /tmp/openhug-preview-server.log 2>&1 &
+          echo $! > /tmp/openhug-preview-server.pid
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Static preview server did not start in time" >&2
+          cat /tmp/openhug-preview-server.log >&2
+          exit 1
+
+      - name: Capture screenshots
+        working-directory: web
+        run: npm run previews
+
+      - name: Commit updated previews
+        run: |
+          if git diff --quiet -- previews; then
+            echo "No preview screenshot changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add previews
+          git commit -m "Update page previews [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
