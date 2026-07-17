@@ -218,6 +218,9 @@ code { font-family: var(--mono); }
 .pill-pending { color: var(--amber); border-color: #e6d3a8; background: var(--amber-soft); }
 
 .hash-chip {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
@@ -551,8 +554,8 @@ button.avatar:hover { transform: translateY(-1px); box-shadow: var(--shadow-md);
 .file-table { overflow: hidden; font-size: 13.5px; }
 .file-header, .file-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 100px 110px 40px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 88px max-content 32px;
+  gap: 16px;
   align-items: center;
   padding: 11px 16px;
   border-bottom: 1px solid var(--line);
@@ -571,6 +574,7 @@ button.avatar:hover { transform: translateY(-1px); box-shadow: var(--shadow-md);
 .file-row .file-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row .file-name svg { width: 15px; height: 15px; color: var(--muted); }
 .file-row .file-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.file-header span:nth-child(3), .file-row .hash-chip { justify-self: start; }
 .file-row .icon-btn { width: 30px; height: 30px; justify-self: end; }
 .file-row .icon-btn svg { width: 15px; height: 15px; }
 
