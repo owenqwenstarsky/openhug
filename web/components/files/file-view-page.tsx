@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CircleAlert, Download, Pencil, Trash2 } from "lucide-react";
 import { FilePageShell } from "@/components/files/file-page-shell";
 import { Alert } from "@/components/ui/alert";
@@ -103,7 +104,7 @@ export function FileViewPage({ route, navigate, user }: {
       <div className="card file-view">
         {markdown ? (
           <div className="markdown-body">
-            <ReactMarkdown>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
         ) : (
           <pre className="file-view-pre">{content}</pre>
