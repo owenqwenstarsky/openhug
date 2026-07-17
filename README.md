@@ -35,17 +35,35 @@ all referenced blobs and refuses to start after an accidental backend switch.
 
 ## CLI
 
-Create a token in **Settings → API tokens**, then authenticate and upload:
+Create a token in **Settings → API tokens**, then add a named server and upload:
 
 ```sh
-openhug --server https://hub.example.com login --token oh_...
+openhug server add home https://hub.example.com --token oh_... --default
 openhug repo create alice/my-model --kind model
 openhug upload alice/my-model ./model --message "Initial weights"
 openhug download alice/my-model config.json
 ```
 
-`OPENHUG_URL` and `OPENHUG_TOKEN` can be used instead of command-line configuration.
-Saved CLI tokens are written atomically with user-only permissions to `~/.config/openhug/token`.
+One CLI installation can keep credentials for multiple OpenHug instances:
+
+```sh
+openhug server add work https://work-hub.example.com --token oh_work
+openhug --server work repo list
+openhug server default home
+```
+
+Use temporary raw overrides when you do not want to save configuration:
+
+```sh
+openhug --server-url https://temp.example.com --token oh_temp whoami
+```
+
+`OPENHUG_URL` and `OPENHUG_TOKEN` can also provide temporary connection values. Saved CLI
+configuration is stored at `~/.config/openhug/config.json` (or under `XDG_CONFIG_HOME`) and is
+written atomically with user-only permissions. Existing `~/.config/openhug/token` credentials are
+migrated automatically into a `default` server on first use. The deprecated `openhug login` and
+`openhug logout` aliases still operate on the resolved default server for compatibility.
+
 The CLI refuses to send bearer tokens to non-loopback HTTP URLs unless `--allow-insecure-http`
 is supplied.
 
