@@ -122,22 +122,8 @@ code { font-family: var(--mono); }
 
 /* Brand ----------------------------------------------------------------- */
 
-.brand { display: inline-flex; align-items: center; gap: 10px; letter-spacing: -0.03em; border: 0; background: none; padding: 0; }
+.brand { display: inline-flex; align-items: center; letter-spacing: -0.03em; border: 0; background: none; padding: 0; }
 .brand strong { font-size: 17px; font-weight: 800; }
-.brand-mark {
-  width: 28px; height: 28px;
-  border: 2px solid var(--ink);
-  border-radius: 50%;
-  display: grid; place-items: center;
-  position: relative;
-}
-.brand-mark::before, .brand-mark::after {
-  content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--ink); top: 7px;
-}
-.brand-mark::before { left: 5px; }
-.brand-mark::after { right: 5px; }
-.brand-mark span { width: 13px; height: 6px; border-bottom: 2px solid var(--ink); border-radius: 0 0 50% 50%; margin-top: 8px; }
 
 /* Buttons ---------------------------------------------------------------- */
 
@@ -807,9 +793,6 @@ button.avatar:hover { transform: translateY(-1px); box-shadow: var(--shadow-md);
   box-shadow: 0 0 0 50px #22221e, 0 0 0 51px #45443f, 0 0 0 105px #22221e, 0 0 0 106px #45443f;
 }
 .onboarding-aside .brand { position: relative; z-index: 1; color: var(--white); }
-.onboarding-aside .brand-mark { border-color: var(--white); }
-.onboarding-aside .brand-mark::before, .onboarding-aside .brand-mark::after { background: var(--white); }
-.onboarding-aside .brand-mark span { border-color: var(--white); }
 .onboarding-aside > div { position: relative; z-index: 1; max-width: 540px; }
 .onboarding-aside h1 { font: 500 clamp(38px, 4.6vw, 62px) / 1.02 var(--display); letter-spacing: -0.03em; margin: 16px 0 18px; }
 .onboarding-aside p:not(.eyebrow) { color: #a9a79f; line-height: 1.65; max-width: 440px; margin: 0; }

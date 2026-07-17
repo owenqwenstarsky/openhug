@@ -160,13 +160,11 @@ function Brand({ name = "OpenHug", onNavigate }: { name?: string; onNavigate?: (
   if (onNavigate)
     return (
       <button className="brand" onClick={onNavigate} aria-label={`${name} home`}>
-        <span className="brand-mark"><span /></span>
         <strong>{name}</strong>
       </button>
     );
   return (
     <span className="brand">
-      <span className="brand-mark"><span /></span>
       <strong>{name}</strong>
     </span>
   );
