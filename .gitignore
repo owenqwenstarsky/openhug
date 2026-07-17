@@ -1,5 +1,15 @@
-/target
-web/node_modules
-web/.next
+# Rust build artifacts
+/target/
+
+# Node / Next.js dependencies and build output
+/web/node_modules/
+/web/.next/
+/web/out/
+*.tsbuildinfo
+
+# Local OpenHug runtime storage
+/data/
+
+# Local environment and OS files
 .env
 .DS_Store
